@@ -12,7 +12,7 @@ if __name__ == "__main__":
     BB = jax.local_device_count()
     B = 2
     T = 2**11
-    rwkv, config = model.RWKV_CharLevel(mlp="linearj2_nb", j_residual=False, j2_residual=True, j3_residual=False)
+    rwkv, config = model.RWKV_CharLevel(mlp="mishglu", j_residual=False, j2_residual=True, j3_residual=False)
     # C = config["n_embd"]
     optimizer = optax.lion(1e-5)
     state = utils.init_fn(jax.random.PRNGKey(42), jax.numpy.ones((BB, T, B), dtype=int), rwkv.init, optimizer)

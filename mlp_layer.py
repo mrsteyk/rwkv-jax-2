@@ -202,8 +202,10 @@ class LinearJ2MLP(hk.Module):
 TRANSFORMER_LAYER_MAPPING = {
     "llama": (LLaMAMLP, jax.nn.silu, False),
     "linear": (LinearMLP, jax.nn.gelu, True),
+    
     # !!!ONLY FOR USE IN J2 RESIDUAL!!!
     "linearj2": (LinearJ2MLP, jax.nn.glu, True),
+    # Explicit no bias, has no effect with current default char level config!
     "linearj2_nb": (LinearJ2MLP, jax.nn.glu, False),
     # PaLM didn't use bias in dense(MLP) layers
     "linearj2_swiglu": (LinearJ2MLP, swiglu, False),
