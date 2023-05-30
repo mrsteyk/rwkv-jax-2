@@ -29,12 +29,14 @@ class RWKV(hk.Module):
         # blocks = [transformer_block.create_block(layer_id, layers, config) for layer_id in range(self._n_layers)]
         for i in range(self._n_layers):
             x1, x2 = jnp.split(
-                hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x),
+                # TODO: config value?
+                # hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x),
+                x,
                 [hiddens // 2], axis=-1
             )
             # print(x1.shape, x2.shape)
             f, g = transformer_block.create_block(i, self._n_layers, self._config)
-            x = x + jnp.concatenate([f(x1), g(x2)], axis=-1)
+            x = jnp.concatenate([x1 + f(x1), x2 + g(x2)], axis=-1)
         
         x = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name="ln_out")(x)
         x = hk.Linear(self._vocab_size, name="lm_head")(x)
@@ -44,7 +46,7 @@ class RWKV(hk.Module):
 
 def loss_fn(apply_fn, weights):
     y_pred = apply_fn(weights, None, x)
-    return optax.softmax_cross_entropy_with_integer_labels(y_pred, y)
+    return optax.softmax_cross_entropy_with_integer_labels(y_pred, y).mean()
 
 def loss_fn_grad(apply_fn):
     def f(x, y, weights):
@@ -52,7 +54,7 @@ def loss_fn_grad(apply_fn):
         return optax.softmax_cross_entropy_with_integer_labels(y_pred, y).mean()
     return jax.value_and_grad(f, argnums=2, allow_int=True)
 
-def RWKV_CharLevel(batch_first = False, do_rearrange = True):
+def RWKV_CharLevel(mlp="rwkv", batch_first = False, do_rearrange = True):
     config = {
         "batch_first": batch_first,
         "do_rearrange": do_rearrange,
@@ -62,7 +64,7 @@ def RWKV_CharLevel(batch_first = False, do_rearrange = True):
         "n_layers": 6,
 
         "mlp": {
-            "layer_name": "rwkv",
+            "layer_name": mlp,
             "widening_factor": 4,
             "bias": False,
         },

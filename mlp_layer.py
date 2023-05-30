@@ -47,7 +47,7 @@ class LLaMAMLP(hk.Module):
                  init_scale: float,
                  widening_factor: int = 4,
                  name: Optional[str] = None,
-                 activation_function: Callable = jax.nn.gelu,
+                 activation_function: Callable = jax.nn.silu,
                  # Mimics LLaMA
                  bias: bool = False):
         super().__init__(name=name)
@@ -61,7 +61,7 @@ class LLaMAMLP(hk.Module):
         initializer = hk.initializers.VarianceScaling(self._init_scale)
         w1 = hk.Linear(self._widening_factor * hiddens, w_init=initializer, with_bias=self._with_bias, name="w1")(x)
         w3 = hk.Linear(self._widening_factor * hiddens, w_init=initializer, with_bias=self._with_bias, name="w3")(x)
-        return hk.Linear(hiddens, name="w2")(self._activation_function(w1) * w3)
+        return hk.Linear(hiddens, w_init=initializer, with_bias=self._with_bias, name="w2")(self._activation_function(w1) * w3)
 
 class ChannelMixing(hk.Module):
     def __init__(self,
@@ -71,12 +71,14 @@ class ChannelMixing(hk.Module):
                  activation_function: Callable = relu_square,
                  bias: bool = False,
                  # layer_id / n_layers
-                 layer_scale: float = 0):
+                 layer_scale: float = 0,
+                 batch_first = True):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
+        self._batch_first = batch_first
 
         def init(shape, dtype):
             ratio_1_to_almost0 = 1.0 - layer_scale  # 1 to ~0
@@ -97,7 +99,12 @@ class ChannelMixing(hk.Module):
         initializer = hk.initializers.VarianceScaling(self._init_scale)
         # TODO: timeshift
         if xx is None:
-            xx = x
+            if not self._batch_first:
+                # S B
+                xx = jnp.concatenate([jnp.zeros_like(x[:1, ...]), x[:-1, ...]], axis=0)
+            else:
+                # B S
+                xx = jnp.concatenate([jnp.zeros_like(x[:, :1, ...]), x[:, :-1, ...]], axis=1)
         
         tmk = hk.get_parameter("time_mix_k", (hiddens,), dtype=jnp.float32, init=self._time_mix_init)
         xk = x * tmk + xx * (1 - tmk)
@@ -119,24 +126,27 @@ class MishGLUMLP(hk.Module):
                  activation_function: Callable = mish,
                  bias: bool = False,
                  # layer_id / n_layers
-                 layer_scale: float = 0):
+                 layer_scale: float = 0,
+                 batch_first = True):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
+        self._batch_first = batch_first
 
-        def init(shape):
+        def init(shape, dtype):
             ratio_1_to_almost0 = 1.0 - layer_scale  # 1 to ~0
-            ddd = jnp.arange(shape[-1], dtype=jnp.float32)
+            ddd = jnp.arange(shape[-1], dtype=dtype)
             ddd = ddd / shape[-1]
             # self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             # self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             return jnp.power(ddd, ratio_1_to_almost0).reshape(shape)
 
-        ecksde
-        def init2(shape):
-            return jnp.concatenate([init(shape) for _ in range(2)], axis=-1)
+        # ecksde
+        def init2(shape, dtype):
+            new_shape = [*shape[:-1], shape[-1] // 2]
+            return jnp.concatenate([init(new_shape, dtype) for _ in range(2)], axis=-1)
         
         self._time_mix_init = init2
     
@@ -146,7 +156,12 @@ class MishGLUMLP(hk.Module):
 
         # TODO: timeshift
         if xx is None:
-            xx = x
+            if not self._batch_first:
+                # S B
+                xx = jnp.concatenate([jnp.zeros_like(x[:1, ...]), x[:-1, ...]], axis=0)
+            else:
+                # B S
+                xx = jnp.concatenate([jnp.zeros_like(x[:, :1, ...]), x[:, :-1, ...]], axis=1)
         
         xx = jnp.concatenate([xx, xx], axis=-1)
         x = jnp.concatenate([x, x], axis=-1)
@@ -160,7 +175,7 @@ class MishGLUMLP(hk.Module):
         return hk.Linear(hiddens, with_bias=self._with_bias, w_init=initializer)(o)
 
 TRANSFORMER_LAYER_MAPPING = {
-    "llama": (LLaMAMLP, jax.nn.gelu, False),
+    "llama": (LLaMAMLP, jax.nn.silu, False),
     "linear": (LinearMLP, jax.nn.gelu, True),
 }
 
@@ -182,7 +197,7 @@ RWKV_LAYER_MAPPINGS = {
 }
 RWKV_LAYERS = RWKV_LAYER_MAPPINGS.keys()
 
-def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers: int, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None):
+def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers: int, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None, batch_first = True):
     assert layer_name in RWKV_LAYERS
     # I think that's how python works?
     func, act_def, bias_def = RWKV_LAYER_MAPPINGS[layer_name]
@@ -190,7 +205,7 @@ def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers:
         activation_function = act_def
     if bias is None:
         bias = bias_def
-    return func(init_scale, widening_factor, name, activation_function, bias, layer_scale=layer_id / layers)
+    return func(init_scale, widening_factor, name, activation_function, bias, layer_scale=layer_id / layers, batch_first=batch_first)
 
 if __name__ == "__main__":
     def test(x):

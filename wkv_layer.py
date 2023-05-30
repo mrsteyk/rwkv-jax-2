@@ -110,7 +110,12 @@ class WKVLayer(hk.Module):
         initializer = hk.initializers.VarianceScaling(self._init_scale)
 
         # TODO: timeshift
-        x_prev = x
+        if not self._batch_first:
+            # S B
+            x_prev = jnp.concatenate([jnp.zeros_like(x[:1, ...]), x[:-1, ...]], axis=0)
+        else:
+            # B S
+            x_prev = jnp.concatenate([jnp.zeros_like(x[:, :1, ...]), x[:, :-1, ...]], axis=1)
         r, k, v = rkv(x, x_prev, self._time_mix_init, self._init_scale, widening_factor=self._widening_factor)
 
         # w

@@ -1,0 +1,5 @@
+mlp,loss,params
+mishglu,6.2091446,9.712384
+rwkv_relu_square,6.3610363,5.387008
+llama_silu,6.632977,6.563584
+linear_gelu,5.835774,4.992256

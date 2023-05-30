@@ -13,8 +13,6 @@ def create_block(layer_id, layers, config):
     mlp = mlp_layer.create_transformer_layer(
         mlp_config["layer_name"],
         mlp_config.get("init_scale", 2. / layers),
-        layer_id,
-        layers,
         widening_factor=mlp_config.get("widening_factor", 4),
         name=mlp_config.get("name", f'l{layer_id}_mlp{mlp_post}'),
         activation_function=None,
@@ -27,7 +25,8 @@ def create_block(layer_id, layers, config):
             widening_factor=mlp_config.get("widening_factor", 4),
             name=mlp_config.get("name", f'l{layer_id}_mlp{mlp_post}'),
             activation_function=None,
-            bias=mlp_config.get("bias", None)
+            bias=mlp_config.get("bias", None),
+            batch_first=batch_first,
         )
     attn = wkv_layer.create_layer(
         attn_config.get("init_scale", 2. / layers),
