@@ -28,15 +28,34 @@ class RWKV(hk.Module):
         # print(x.shape)
         # blocks = [transformer_block.create_block(layer_id, layers, config) for layer_id in range(self._n_layers)]
         for i in range(self._n_layers):
-            x1, x2 = jnp.split(
-                # TODO: config value?
-                # hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x),
-                x,
-                [hiddens // 2], axis=-1
-            )
-            # print(x1.shape, x2.shape)
+            # for J3 and mine
+            # x1, x2 = jnp.split(
+            #     # TODO: config value?
+            #     # hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x),
+            #     x,
+            #     [hiddens // 2], axis=-1
+            # )
+            # # print(x1.shape, x2.shape)
             f, g = transformer_block.create_block(i, self._n_layers, self._config)
-            x = jnp.concatenate([x1 + f(x1), x2 + g(x2)], axis=-1)
+            # J3
+            # y1 = f(x2) + x1
+            # y2 = g(y1) + x2
+            # assert y1.shape == x1.shape
+            # assert y2.shape == x2.shape
+            # x = jnp.concatenate([y1, y2], axis=-1)
+            # # Mine, weird interpret of J3
+            # x = jnp.concatenate([x1 + f(x1), x2 + g(x2)], axis=-1)
+
+            # For J2 and 1? Fun fact: NeoX codebase had a bug where it wasn't actually tied J residuals! Behind config var for backcompat with 20b
+            # Source: https://github.com/EleutherAI/gpt-neox/blob/335514210ad5226637cce647d6251d26819ca147/megatron/model/transformer.py#L805-L810
+            hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x)
+            # J1 tied ln
+            # x = f(x) + g(x)
+            
+            # J2 does something funny akin to that?
+            # BUT hardcoded widening factor for MLP in J2 is 8, I use 4 as per J3
+            x = jnp.concatenate([f(x), g(x)], axis=-1)
+            x = hk.Linear(hiddens, w_init=hk.initializers.VarianceScaling(2 / self._n_layers), with_bias=False, name=f"l{i}_o")(x)
         
         x = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name="ln_out")(x)
         x = hk.Linear(self._vocab_size, name="lm_head")(x)

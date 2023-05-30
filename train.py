@@ -10,9 +10,9 @@ import utils
 
 if __name__ == "__main__":
     BB = jax.local_device_count()
-    B = 4
-    T = 512
-    rwkv, config = model.RWKV_CharLevel()
+    B = 2
+    T = 2**11
+    rwkv, config = model.RWKV_CharLevel(mlp="rwkv")
     # C = config["n_embd"]
     optimizer = optax.lion(1e-5)
     state = utils.init_fn(jax.random.PRNGKey(42), jax.numpy.ones((BB, T, B), dtype=int), rwkv.init, optimizer)
@@ -37,6 +37,7 @@ if __name__ == "__main__":
 
     start = time.time()
     loss, acc = step_fn(jax.numpy.ones((BB, T, B), dtype=int), jax.numpy.ones((BB, T, B), dtype=int), state['params'], state['grad_acc'])
+    # acc = jax.tree_map(lambda x: x.astype(jax.numpy.bfloat16), acc)
     print("A", time.time() - start)
     start = time.time()
     loss, acc = step_fn(jax.numpy.ones((BB, T, B), dtype=int), jax.numpy.ones((BB, T, B), dtype=int), state['params'], acc)
