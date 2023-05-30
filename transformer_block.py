@@ -37,7 +37,8 @@ def create_block(layer_id, layers, config):
         batch_first=batch_first,
         do_rearrange=do_rearrange
     )
-    if layer_id % 2 == 1:
+    # Homogsomething bs for when it doesn't matter?
+    if layer_id % 2 == 1 or (not config["j_residual"] and not config["j2_residual"]):
         return attn, mlp
     else:
         return mlp, attn
