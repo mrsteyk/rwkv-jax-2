@@ -174,9 +174,39 @@ class MishGLUMLP(hk.Module):
         o = a * self._activation_function(b)
         return hk.Linear(hiddens, with_bias=self._with_bias, w_init=initializer)(o)
 
+class LinearJ2MLP(hk.Module):
+    def __init__(self,
+                 init_scale: float,
+                 widening_factor: int = 4,
+                 name: Optional[str] = None,
+                 # You can swap this for swiglu idfk
+                 activation_function: Callable = jax.nn.glu,
+                 # Mimics GPT-J2
+                 bias: bool = True):
+        super().__init__(name=name)
+        self._init_scale = init_scale
+        self._widening_factor = widening_factor
+        self._activation_function = activation_function
+        self._with_bias = bias
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        hiddens = x.shape[-1]
+        initializer = hk.initializers.VarianceScaling(self._init_scale)
+
+        # TODO: original implementation doesn't set w_init
+        # Under default conditions it will be hiddens * 4 * 2 = hiddens * 8, as per original!
+        x = hk.Linear(hiddens * self._widening_factor * 2, with_bias=self._with_bias, w_init=initializer)(x)
+
+        return self._activation_function(x)
+
 TRANSFORMER_LAYER_MAPPING = {
     "llama": (LLaMAMLP, jax.nn.silu, False),
     "linear": (LinearMLP, jax.nn.gelu, True),
+    # !!!ONLY FOR USE IN J2 RESIDUAL!!!
+    "linearj2": (LinearJ2MLP, jax.nn.glu, True),
+    "linearj2_nb": (LinearJ2MLP, jax.nn.glu, False),
+    # PaLM didn't use bias in dense(MLP) layers
+    "linearj2_swiglu": (LinearJ2MLP, swiglu, False),
 }
 
 TRANSFORMER_LAYERS = TRANSFORMER_LAYER_MAPPING.keys()
