@@ -50,12 +50,12 @@ class RWKV(hk.Module):
             # Source: https://github.com/EleutherAI/gpt-neox/blob/335514210ad5226637cce647d6251d26819ca147/megatron/model/transformer.py#L805-L810
             hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name=f'l{i}_ln')(x)
             # J1 tied ln
-            # x = f(x) + g(x)
+            x = x + f(x) + g(x)
             
             # J2 does something funny akin to that?
             # BUT hardcoded widening factor for MLP in J2 is 8, I use 4 as per J3
-            x = jnp.concatenate([f(x), g(x)], axis=-1)
-            x = hk.Linear(hiddens, w_init=hk.initializers.VarianceScaling(2 / self._n_layers), with_bias=False, name=f"l{i}_o")(x)
+            # xx = jnp.concatenate([f(x), g(x)], axis=-1)
+            # x = x + hk.Linear(hiddens, w_init=hk.initializers.VarianceScaling(2 / self._n_layers), with_bias=False, name=f"l{i}_o")(xx)
         
         x = hk.LayerNorm(axis=-1, create_scale=True, create_offset=True, name="ln_out")(x)
         x = hk.Linear(self._vocab_size, name="lm_head")(x)
