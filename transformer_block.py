@@ -4,6 +4,7 @@ import mlp_layer
 def create_block(layer_id, layers, config):
     batch_first = config["batch_first"]
     do_rearrange = config["do_rearrange"]
+    skip_output = config["j2_residual"]
 
     mlp_config = config["mlp"]
     attn_config = config["attn"]
@@ -16,7 +17,8 @@ def create_block(layer_id, layers, config):
         widening_factor=mlp_config.get("widening_factor", 4),
         name=mlp_config.get("name", f'l{layer_id}_mlp{mlp_post}'),
         activation_function=None,
-        bias=mlp_config.get("bias", None)
+        bias=mlp_config.get("bias", None),
+        skip_output=skip_output,
     ) if mlp_config["layer_name"] in mlp_layer.TRANSFORMER_LAYERS else mlp_layer.create_rwkv_layer(
             mlp_config["layer_name"],
             mlp_config.get("init_scale", 2. / layers),
@@ -27,6 +29,7 @@ def create_block(layer_id, layers, config):
             activation_function=None,
             bias=mlp_config.get("bias", None),
             batch_first=batch_first,
+            skip_output=skip_output,
         )
     attn = wkv_layer.create_layer(
         attn_config.get("init_scale", 2. / layers),

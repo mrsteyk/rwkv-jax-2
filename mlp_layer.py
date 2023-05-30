@@ -28,19 +28,24 @@ class LinearMLP(hk.Module):
                  name: Optional[str] = None,
                  activation_function: Callable = jax.nn.gelu,
                  # Mimics GPT-J
-                 bias: bool = True):
+                 bias: bool = True,
+                 skip_output = False):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
+        self._skip_output = skip_output
     
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         hiddens = x.shape[-1]
         initializer = hk.initializers.VarianceScaling(self._init_scale)
         x = hk.Linear(self._widening_factor * hiddens, w_init=initializer, with_bias=self._with_bias)(x)
         x = self._activation_function(x)
-        return hk.Linear(hiddens, w_init=initializer)(x)
+        if not self._skip_output:
+            return hk.Linear(hiddens, w_init=initializer)(x)
+        else:
+            return x
 
 class LLaMAMLP(hk.Module):
     def __init__(self,
@@ -49,19 +54,25 @@ class LLaMAMLP(hk.Module):
                  name: Optional[str] = None,
                  activation_function: Callable = jax.nn.silu,
                  # Mimics LLaMA
-                 bias: bool = False):
+                 bias: bool = False,
+                 skip_output = False):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
+        self._skip_output = skip_output
     
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         hiddens = x.shape[-1]
         initializer = hk.initializers.VarianceScaling(self._init_scale)
         w1 = hk.Linear(self._widening_factor * hiddens, w_init=initializer, with_bias=self._with_bias, name="w1")(x)
         w3 = hk.Linear(self._widening_factor * hiddens, w_init=initializer, with_bias=self._with_bias, name="w3")(x)
-        return hk.Linear(hiddens, w_init=initializer, with_bias=self._with_bias, name="w2")(self._activation_function(w1) * w3)
+        o = self._activation_function(w1) * w3
+        if not self._skip_output:
+            return hk.Linear(hiddens, w_init=initializer, with_bias=self._with_bias, name="w2")(o)
+        else:
+            return o
 
 class ChannelMixing(hk.Module):
     def __init__(self,
@@ -72,7 +83,9 @@ class ChannelMixing(hk.Module):
                  bias: bool = False,
                  # layer_id / n_layers
                  layer_scale: float = 0,
-                 batch_first = True):
+                 batch_first = True,
+                 # Literally nothing!
+                 skip_output = False):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
@@ -127,13 +140,15 @@ class MishGLUMLP(hk.Module):
                  bias: bool = False,
                  # layer_id / n_layers
                  layer_scale: float = 0,
-                 batch_first = True):
+                 batch_first = True,
+                 skip_output = False):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
         self._batch_first = batch_first
+        self._skip_output = skip_output
 
         def init(shape, dtype):
             ratio_1_to_almost0 = 1.0 - layer_scale  # 1 to ~0
@@ -172,7 +187,10 @@ class MishGLUMLP(hk.Module):
         a, b = jnp.split(ab, [hiddens * self._widening_factor], axis=-1)
 
         o = a * self._activation_function(b)
-        return hk.Linear(hiddens, with_bias=self._with_bias, w_init=initializer)(o)
+        if not self._skip_output:
+            return hk.Linear(hiddens, with_bias=self._with_bias, w_init=initializer)(o)
+        else:
+            return o
 
 class LinearJ2MLP(hk.Module):
     def __init__(self,
@@ -182,12 +200,16 @@ class LinearJ2MLP(hk.Module):
                  # You can swap this for swiglu idfk
                  activation_function: Callable = jax.nn.glu,
                  # Mimics GPT-J2
-                 bias: bool = True):
+                 bias: bool = True,
+                 # no op
+                 skip_output: bool = True):
         super().__init__(name=name)
         self._init_scale = init_scale
         self._widening_factor = widening_factor
         self._activation_function = activation_function
         self._with_bias = bias
+        # This was originally a dirty fix!
+        assert skip_output
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         hiddens = x.shape[-1]
@@ -213,7 +235,7 @@ TRANSFORMER_LAYER_MAPPING = {
 
 TRANSFORMER_LAYERS = TRANSFORMER_LAYER_MAPPING.keys()
 
-def create_transformer_layer(layer_name: str, init_scale: float, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None):
+def create_transformer_layer(layer_name: str, init_scale: float, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None, skip_output = False):
     assert layer_name in TRANSFORMER_LAYERS
     # I think that's how python works?
     func, act_def, bias_def = TRANSFORMER_LAYER_MAPPING[layer_name]
@@ -221,7 +243,7 @@ def create_transformer_layer(layer_name: str, init_scale: float, widening_factor
         activation_function = act_def
     if bias is None:
         bias = bias_def
-    return func(init_scale, widening_factor, name, activation_function, bias)
+    return func(init_scale, widening_factor, name, activation_function, bias, skip_output=skip_output)
 
 RWKV_LAYER_MAPPINGS = {
     "rwkv": (ChannelMixing, relu_square, False),
@@ -229,7 +251,7 @@ RWKV_LAYER_MAPPINGS = {
 }
 RWKV_LAYERS = RWKV_LAYER_MAPPINGS.keys()
 
-def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers: int, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None, batch_first = True):
+def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers: int, widening_factor: float = 4, name: Optional[str] = None, activation_function: Optional[Callable] = None, bias: Optional[bool] = None, batch_first = True, skip_output = False):
     assert layer_name in RWKV_LAYERS
     # I think that's how python works?
     func, act_def, bias_def = RWKV_LAYER_MAPPINGS[layer_name]
@@ -237,7 +259,7 @@ def create_rwkv_layer(layer_name: str, init_scale: float, layer_id: int, layers:
         activation_function = act_def
     if bias is None:
         bias = bias_def
-    return func(init_scale, widening_factor, name, activation_function, bias, layer_scale=layer_id / layers, batch_first=batch_first)
+    return func(init_scale, widening_factor, name, activation_function, bias, layer_scale=layer_id / layers, batch_first=batch_first, skip_output=skip_output)
 
 if __name__ == "__main__":
     def test(x):
